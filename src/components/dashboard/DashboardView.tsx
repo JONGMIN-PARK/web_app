@@ -97,7 +97,7 @@ export default function DashboardView() {
               {recentMessages.map((msg) => (
                 <div key={msg.id} className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-xs shrink-0">
-                    {msg.senderName[0]}
+                    {msg.senderName?.[0] || "?"}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">

@@ -73,23 +73,23 @@ export default function Sidebar({
           ))}
         </nav>
 
-        <div className="p-3 border-t border-slate-700">
-          <div className="text-xs text-slate-500 mb-2 px-2">접속중인 피어</div>
+        <div className="p-3 border-t border-slate-700 overflow-y-auto">
+          <div className="text-xs text-slate-500 mb-2 px-2">
+            접속자 ({state.peers.length}명)
+          </div>
+          {state.peers.length === 0 && (
+            <div className="text-xs text-slate-600 px-2">접속자 없음</div>
+          )}
           {state.peers.map((peer) => (
             <div
               key={peer.id}
               className="flex items-center gap-2 px-2 py-1.5 text-sm"
             >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  peer.status === "online"
-                    ? "bg-green-400"
-                    : peer.status === "away"
-                    ? "bg-yellow-400"
-                    : "bg-slate-500"
-                }`}
-              />
-              <span className="text-slate-300">{peer.name}</span>
+              <span className="w-2 h-2 rounded-full bg-green-400" />
+              <span className={`text-slate-300 ${peer.id === state.currentUser.id ? "font-bold" : ""}`}>
+                {peer.name}
+                {peer.id === state.currentUser.id && " (나)"}
+              </span>
             </div>
           ))}
         </div>
@@ -97,11 +97,13 @@ export default function Sidebar({
         <div className="p-3 border-t border-slate-700">
           <div className="flex items-center gap-2 px-2">
             <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold">
-              {state.currentUser.name[0]}
+              {state.nickname?.[0] || "?"}
             </div>
-            <div>
-              <div className="text-sm font-medium">{state.currentUser.name}</div>
-              <div className="text-xs text-green-400">온라인</div>
+            <div className="min-w-0">
+              <div className="text-sm font-medium truncate">{state.nickname || "..."}</div>
+              <div className={`text-xs ${state.wsConnected ? "text-green-400" : "text-red-400"}`}>
+                {state.wsConnected ? "연결됨" : "연결 중..."}
+              </div>
             </div>
           </div>
         </div>

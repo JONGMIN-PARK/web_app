@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useApp } from "@/store/AppContext";
 import Sidebar from "@/components/Sidebar";
+import NicknameScreen from "@/components/NicknameScreen";
 import DashboardView from "@/components/dashboard/DashboardView";
 import ChatView from "@/components/chat/ChatView";
 import FileTransferView from "@/components/files/FileTransferView";
@@ -12,6 +13,11 @@ import ScheduleView from "@/components/schedule/ScheduleView";
 export default function Home() {
   const { state } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Show nickname screen if not set
+  if (!state.nickname) {
+    return <NicknameScreen />;
+  }
 
   function renderView() {
     switch (state.currentView) {

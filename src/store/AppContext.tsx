@@ -5,7 +5,7 @@ import React, {
   useContext,
   useReducer,
   useEffect,
-  useRef,
+  useCallback,
   ReactNode,
 } from "react";
 import {
@@ -17,7 +17,7 @@ import {
   ChatMessage,
   Schedule,
 } from "@/types";
-import { v4 as uuidv4 } from "uuid";
+import { useWebSocket, WsMessage, WsUser, WsRoom } from "@/hooks/useWebSocket";
 
 interface AppState {
   currentUser: User;
@@ -28,290 +28,137 @@ interface AppState {
   projects: Project[];
   activeProjectId: string | null;
   peers: User[];
+  nickname: string | null; // null = not set yet
+  wsConnected: boolean;
+  typingUsers: Record<string, string>; // roomId -> "name is typing..."
 }
 
 type AppAction =
   | { type: "SET_VIEW"; payload: AppView }
   | { type: "SET_ACTIVE_CHAT"; payload: string }
-  | { type: "ADD_CHAT_ROOM"; payload: ChatRoom }
+  | { type: "SET_NICKNAME"; payload: string }
+  | { type: "SET_USER"; payload: { id: string; name: string } }
+  | { type: "SET_ROOMS"; payload: WsRoom[] }
+  | { type: "SET_PEERS"; payload: User[] }
+  | { type: "ADD_PEER"; payload: User }
+  | { type: "REMOVE_PEER"; payload: string }
   | { type: "ADD_MESSAGE"; payload: { roomId: string; message: ChatMessage } }
+  | { type: "SET_ROOM_MESSAGES"; payload: { roomId: string; messages: ChatMessage[] } }
+  | { type: "SET_WS_CONNECTED"; payload: boolean }
+  | { type: "SET_TYPING"; payload: { roomId: string; text: string } }
   | { type: "ADD_FILE_TRANSFER"; payload: FileTransferInfo }
-  | {
-      type: "UPDATE_FILE_TRANSFER";
-      payload: { id: string; updates: Partial<FileTransferInfo> };
-    }
+  | { type: "UPDATE_FILE_TRANSFER"; payload: { id: string; updates: Partial<FileTransferInfo> } }
   | { type: "ADD_PROJECT"; payload: Project }
   | { type: "UPDATE_PROJECT"; payload: { id: string; updates: Partial<Project> } }
   | { type: "DELETE_PROJECT"; payload: string }
   | { type: "SET_ACTIVE_PROJECT"; payload: string | null }
   | { type: "ADD_SCHEDULE"; payload: Schedule }
   | { type: "UPDATE_SCHEDULE"; payload: { id: string; updates: Partial<Schedule> } }
-  | { type: "DELETE_SCHEDULE"; payload: { projectId: string; scheduleId: string } }
-  | { type: "ADD_PEER"; payload: User }
-  | { type: "REMOVE_PEER"; payload: string }
-  | { type: "UPDATE_PEER_STATUS"; payload: { id: string; status: User["status"] } }
-  | { type: "HYDRATE"; payload: AppState };
+  | { type: "DELETE_SCHEDULE"; payload: { projectId: string; scheduleId: string } };
 
-const STORAGE_KEY = "p2p-collab-state";
+const NICK_KEY = "p2p-collab-nickname";
 
-const currentUser: User = {
-  id: "user-self",
-  name: "나",
-  status: "online",
-};
-
-const demoPeers: User[] = [
-  { id: "peer-1", name: "김민수", status: "online" },
-  { id: "peer-2", name: "이서연", status: "online" },
-  { id: "peer-3", name: "박지훈", status: "away" },
-];
-
-function createDemoData(user: User, peers: User[]): Partial<AppState> {
-  const now = Date.now();
-
-  const room1: ChatRoom = {
-    id: "room-general",
-    name: "일반 채팅",
-    participants: [user, peers[0], peers[1]],
-    messages: [
-      {
-        id: uuidv4(),
-        senderId: peers[0].id,
-        senderName: peers[0].name,
-        content: "안녕하세요! 프로젝트 관련해서 이야기 나눠봐요.",
-        timestamp: now - 3600000,
-        type: "text",
-      },
-      {
-        id: uuidv4(),
-        senderId: peers[1].id,
-        senderName: peers[1].name,
-        content: "네, 좋습니다! 일정 확인했어요.",
-        timestamp: now - 3500000,
-        type: "text",
-      },
-      {
-        id: uuidv4(),
-        senderId: user.id,
-        senderName: user.name,
-        content: "기획안 파일 공유합니다.",
-        timestamp: now - 3400000,
-        type: "text",
-      },
-    ],
-    lastActivity: now - 3400000,
-  };
-
-  const room2: ChatRoom = {
-    id: "room-dev",
-    name: "개발팀",
-    participants: [user, peers[2]],
-    messages: [
-      {
-        id: uuidv4(),
-        senderId: peers[2].id,
-        senderName: peers[2].name,
-        content: "API 설계 완료했습니다.",
-        timestamp: now - 7200000,
-        type: "text",
-      },
-    ],
-    lastActivity: now - 7200000,
-  };
-
-  const project1: Project = {
-    id: "proj-1",
-    name: "웹앱 리뉴얼",
-    description: "기존 웹앱을 Next.js로 리뉴얼하는 프로젝트",
-    members: [user, peers[0], peers[1]],
-    createdAt: now - 86400000 * 7,
-    updatedAt: now - 3600000,
-    status: "active",
-    schedules: [],
-  };
-
-  project1.schedules = [
-    {
-      id: uuidv4(),
-      projectId: project1.id,
-      title: "기획 완료",
-      description: "전체 기획안 작성 및 검토",
-      startDate: "2026-02-10",
-      endDate: "2026-02-14",
-      assignees: [user, peers[0]],
-      status: "in_progress",
-      color: "#3B82F6",
-      createdAt: now - 86400000 * 5,
-    },
-    {
-      id: uuidv4(),
-      projectId: project1.id,
-      title: "디자인 작업",
-      description: "UI/UX 디자인",
-      startDate: "2026-02-15",
-      endDate: "2026-02-21",
-      assignees: [peers[1]],
-      status: "todo",
-      color: "#8B5CF6",
-      createdAt: now - 86400000 * 5,
-    },
-    {
-      id: uuidv4(),
-      projectId: project1.id,
-      title: "프론트엔드 개발",
-      description: "React 컴포넌트 개발",
-      startDate: "2026-02-22",
-      endDate: "2026-03-07",
-      assignees: [user, peers[0]],
-      status: "todo",
-      color: "#10B981",
-      createdAt: now - 86400000 * 5,
-    },
-  ];
-
-  const project2: Project = {
-    id: "proj-2",
-    name: "모바일 앱 MVP",
-    description: "모바일 앱 최소 기능 제품 개발",
-    members: [user, peers[2]],
-    createdAt: now - 86400000 * 3,
-    updatedAt: now - 86400000,
-    status: "active",
-    schedules: [
-      {
-        id: uuidv4(),
-        projectId: "",
-        title: "요구사항 분석",
-        description: "사용자 요구사항 수집 및 분석",
-        startDate: "2026-02-11",
-        endDate: "2026-02-18",
-        assignees: [user],
-        status: "in_progress",
-        color: "#F59E0B",
-        createdAt: now - 86400000 * 2,
-      },
-    ],
-  };
-  project2.schedules[0].projectId = project2.id;
-
-  const fileTransfers: FileTransferInfo[] = [
-    {
-      id: uuidv4(),
-      fileName: "기획안_v2.pdf",
-      fileSize: 2450000,
-      fileType: "application/pdf",
-      status: "completed",
-      progress: 100,
-      senderId: user.id,
-      senderName: user.name,
-      receiverId: peers[0].id,
-      receiverName: peers[0].name,
-      timestamp: now - 3400000,
-    },
-    {
-      id: uuidv4(),
-      fileName: "디자인_시안.fig",
-      fileSize: 8900000,
-      fileType: "application/figma",
-      status: "completed",
-      progress: 100,
-      senderId: peers[1].id,
-      senderName: peers[1].name,
-      receiverId: user.id,
-      receiverName: user.name,
-      timestamp: now - 86400000,
-    },
-    {
-      id: uuidv4(),
-      fileName: "API_문서.docx",
-      fileSize: 540000,
-      fileType: "application/docx",
-      status: "completed",
-      progress: 100,
-      senderId: peers[2].id,
-      senderName: peers[2].name,
-      receiverId: user.id,
-      receiverName: user.name,
-      timestamp: now - 7200000,
-    },
-  ];
-
-  return {
-    chatRooms: [room1, room2],
-    projects: [project1, project2],
-    fileTransfers,
-  };
+function getSavedNickname(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(NICK_KEY);
 }
 
-const demoData = createDemoData(currentUser, demoPeers);
+function saveNickname(name: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(NICK_KEY, name);
+}
 
 const initialState: AppState = {
-  currentUser,
+  currentUser: { id: "", name: "", status: "online" },
   currentView: "dashboard",
-  chatRooms: demoData.chatRooms || [],
+  chatRooms: [],
   activeChatRoomId: null,
-  fileTransfers: demoData.fileTransfers || [],
-  projects: demoData.projects || [],
+  fileTransfers: [],
+  projects: [],
   activeProjectId: null,
-  peers: demoPeers,
+  peers: [],
+  nickname: null,
+  wsConnected: false,
+  typingUsers: {},
 };
-
-function loadState(): AppState | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return null;
-    return JSON.parse(saved) as AppState;
-  } catch {
-    return null;
-  }
-}
-
-function saveState(state: AppState) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // storage full - ignore
-  }
-}
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
-    case "HYDRATE":
-      return action.payload;
     case "SET_VIEW":
       return { ...state, currentView: action.payload };
     case "SET_ACTIVE_CHAT":
       return { ...state, activeChatRoomId: action.payload || null };
-    case "ADD_CHAT_ROOM":
-      return { ...state, chatRooms: [...state.chatRooms, action.payload] };
-    case "ADD_MESSAGE": {
+    case "SET_NICKNAME":
+      return { ...state, nickname: action.payload };
+    case "SET_USER":
       return {
         ...state,
-        chatRooms: state.chatRooms.map((room) =>
-          room.id === action.payload.roomId
-            ? {
-                ...room,
-                messages: [...room.messages, action.payload.message],
-                lastActivity: action.payload.message.timestamp,
-              }
-            : room
+        currentUser: { id: action.payload.id, name: action.payload.name, status: "online" },
+      };
+    case "SET_ROOMS": {
+      const existingMessages: Record<string, ChatMessage[]> = {};
+      state.chatRooms.forEach((r) => {
+        existingMessages[r.id] = r.messages;
+      });
+      return {
+        ...state,
+        chatRooms: action.payload.map((r) => ({
+          id: r.id,
+          name: r.name,
+          participants: [],
+          messages: existingMessages[r.id] || [],
+          lastActivity: Date.now(),
+        })),
+      };
+    }
+    case "SET_PEERS":
+      return { ...state, peers: action.payload };
+    case "ADD_PEER": {
+      if (state.peers.find((p) => p.id === action.payload.id)) return state;
+      return { ...state, peers: [...state.peers, action.payload] };
+    }
+    case "REMOVE_PEER":
+      return { ...state, peers: state.peers.filter((p) => p.id !== action.payload) };
+    case "ADD_MESSAGE": {
+      const { roomId, message } = action.payload;
+      const roomExists = state.chatRooms.some((r) => r.id === roomId);
+      if (!roomExists) return state;
+      // Deduplicate by message id
+      const room = state.chatRooms.find((r) => r.id === roomId)!;
+      if (room.messages.some((m) => m.id === message.id)) return state;
+      return {
+        ...state,
+        chatRooms: state.chatRooms.map((r) =>
+          r.id === roomId
+            ? { ...r, messages: [...r.messages, message], lastActivity: message.timestamp }
+            : r
         ),
       };
     }
-    case "ADD_FILE_TRANSFER":
+    case "SET_ROOM_MESSAGES": {
       return {
         ...state,
-        fileTransfers: [action.payload, ...state.fileTransfers],
+        chatRooms: state.chatRooms.map((r) =>
+          r.id === action.payload.roomId
+            ? { ...r, messages: action.payload.messages }
+            : r
+        ),
       };
+    }
+    case "SET_WS_CONNECTED":
+      return { ...state, wsConnected: action.payload };
+    case "SET_TYPING":
+      return {
+        ...state,
+        typingUsers: { ...state.typingUsers, [action.payload.roomId]: action.payload.text },
+      };
+    case "ADD_FILE_TRANSFER":
+      return { ...state, fileTransfers: [action.payload, ...state.fileTransfers] };
     case "UPDATE_FILE_TRANSFER":
       return {
         ...state,
         fileTransfers: state.fileTransfers.map((ft) =>
-          ft.id === action.payload.id
-            ? { ...ft, ...action.payload.updates }
-            : ft
+          ft.id === action.payload.id ? { ...ft, ...action.payload.updates } : ft
         ),
       };
     case "ADD_PROJECT":
@@ -327,14 +174,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         projects: state.projects.filter((p) => p.id !== action.payload),
-        activeProjectId:
-          state.activeProjectId === action.payload
-            ? null
-            : state.activeProjectId,
+        activeProjectId: state.activeProjectId === action.payload ? null : state.activeProjectId,
       };
     case "SET_ACTIVE_PROJECT":
       return { ...state, activeProjectId: action.payload };
-    case "ADD_SCHEDULE": {
+    case "ADD_SCHEDULE":
       return {
         ...state,
         projects: state.projects.map((p) =>
@@ -343,8 +187,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
             : p
         ),
       };
-    }
-    case "UPDATE_SCHEDULE": {
+    case "UPDATE_SCHEDULE":
       return {
         ...state,
         projects: state.projects.map((p) => ({
@@ -354,35 +197,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ),
         })),
       };
-    }
-    case "DELETE_SCHEDULE": {
+    case "DELETE_SCHEDULE":
       return {
         ...state,
         projects: state.projects.map((p) =>
           p.id === action.payload.projectId
-            ? {
-                ...p,
-                schedules: p.schedules.filter(
-                  (s) => s.id !== action.payload.scheduleId
-                ),
-              }
-            : p
-        ),
-      };
-    }
-    case "ADD_PEER":
-      return { ...state, peers: [...state.peers, action.payload] };
-    case "REMOVE_PEER":
-      return {
-        ...state,
-        peers: state.peers.filter((p) => p.id !== action.payload),
-      };
-    case "UPDATE_PEER_STATUS":
-      return {
-        ...state,
-        peers: state.peers.map((p) =>
-          p.id === action.payload.id
-            ? { ...p, status: action.payload.status }
+            ? { ...p, schedules: p.schedules.filter((s) => s.id !== action.payload.scheduleId) }
             : p
         ),
       };
@@ -391,33 +211,124 @@ function appReducer(state: AppState, action: AppAction): AppState {
   }
 }
 
-const AppContext = createContext<{
+interface AppContextType {
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
-}>({ state: initialState, dispatch: () => undefined });
+  sendMessage: (roomId: string, content: string, id: string) => void;
+  sendTyping: (roomId: string) => void;
+  setNickname: (name: string) => void;
+}
+
+const AppContext = createContext<AppContextType>({
+  state: initialState,
+  dispatch: () => undefined,
+  sendMessage: () => undefined,
+  sendTyping: () => undefined,
+  setNickname: () => undefined,
+});
+
+function wsMessageToChatMessage(msg: WsMessage): ChatMessage {
+  return {
+    id: msg.id,
+    senderId: msg.senderId,
+    senderName: msg.senderName,
+    content: msg.content,
+    timestamp: msg.timestamp,
+    type: msg.type,
+  };
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
-  const hydrated = useRef(false);
 
-  // Load saved state on mount
+  // Load nickname on mount
   useEffect(() => {
-    const saved = loadState();
+    const saved = getSavedNickname();
     if (saved) {
-      dispatch({ type: "HYDRATE", payload: saved });
+      dispatch({ type: "SET_NICKNAME", payload: saved });
     }
-    hydrated.current = true;
   }, []);
 
-  // Save state on every change (after hydration)
+  const onRegistered = useCallback(
+    (data: { userId: string; name: string; rooms: WsRoom[]; users: WsUser[] }) => {
+      dispatch({ type: "SET_USER", payload: { id: data.userId, name: data.name } });
+      dispatch({ type: "SET_ROOMS", payload: data.rooms });
+      dispatch({
+        type: "SET_PEERS",
+        payload: data.users.map((u) => ({ id: u.id, name: u.name, status: u.status })),
+      });
+    },
+    []
+  );
+
+  const onMessage = useCallback((roomId: string, message: WsMessage) => {
+    dispatch({
+      type: "ADD_MESSAGE",
+      payload: { roomId, message: wsMessageToChatMessage(message) },
+    });
+  }, []);
+
+  const onHistory = useCallback((roomId: string, messages: WsMessage[]) => {
+    dispatch({
+      type: "SET_ROOM_MESSAGES",
+      payload: { roomId, messages: messages.map(wsMessageToChatMessage) },
+    });
+  }, []);
+
+  const onUserJoined = useCallback((_user: WsUser, allUsers: WsUser[]) => {
+    dispatch({
+      type: "SET_PEERS",
+      payload: allUsers.map((u) => ({ id: u.id, name: u.name, status: u.status })),
+    });
+  }, []);
+
+  const onUserLeft = useCallback((_userId: string, allUsers: WsUser[]) => {
+    dispatch({
+      type: "SET_PEERS",
+      payload: allUsers.map((u) => ({ id: u.id, name: u.name, status: u.status })),
+    });
+  }, []);
+
+  const onTyping = useCallback((roomId: string, userName: string) => {
+    dispatch({ type: "SET_TYPING", payload: { roomId, text: `${userName}님이 입력 중...` } });
+    setTimeout(() => {
+      dispatch({ type: "SET_TYPING", payload: { roomId, text: "" } });
+    }, 2000);
+  }, []);
+
+  const onConnectionChange = useCallback((connected: boolean) => {
+    dispatch({ type: "SET_WS_CONNECTED", payload: connected });
+  }, []);
+
+  const { register, sendMessage, sendTyping } = useWebSocket({
+    onRegistered,
+    onMessage,
+    onHistory,
+    onUserJoined,
+    onUserLeft,
+    onTyping,
+    onConnectionChange,
+  });
+
+  const setNickname = useCallback(
+    (name: string) => {
+      saveNickname(name);
+      dispatch({ type: "SET_NICKNAME", payload: name });
+      register(name);
+    },
+    [register]
+  );
+
+  // Auto-register if nickname already saved
   useEffect(() => {
-    if (hydrated.current) {
-      saveState(state);
+    const saved = getSavedNickname();
+    if (saved) {
+      register(saved);
     }
-  }, [state]);
+  }, [register]);
 
   return (
-    <AppContext.Provider value={{ state, dispatch }}>
+    <AppContext.Provider value={{ state, dispatch, sendMessage, sendTyping, setNickname }}>
       {children}
     </AppContext.Provider>
   );
