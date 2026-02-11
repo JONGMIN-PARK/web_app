@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useReducer, ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  useEffect,
+  useRef,
+  ReactNode,
+} from "react";
 import {
   User,
   ChatRoom,
@@ -42,25 +49,28 @@ type AppAction =
   | { type: "DELETE_SCHEDULE"; payload: { projectId: string; scheduleId: string } }
   | { type: "ADD_PEER"; payload: User }
   | { type: "REMOVE_PEER"; payload: string }
-  | { type: "UPDATE_PEER_STATUS"; payload: { id: string; status: User["status"] } };
+  | { type: "UPDATE_PEER_STATUS"; payload: { id: string; status: User["status"] } }
+  | { type: "HYDRATE"; payload: AppState };
+
+const STORAGE_KEY = "p2p-collab-state";
 
 const currentUser: User = {
-  id: uuidv4(),
+  id: "user-self",
   name: "나",
   status: "online",
 };
 
 const demoPeers: User[] = [
-  { id: uuidv4(), name: "김민수", status: "online" },
-  { id: uuidv4(), name: "이서연", status: "online" },
-  { id: uuidv4(), name: "박지훈", status: "away" },
+  { id: "peer-1", name: "김민수", status: "online" },
+  { id: "peer-2", name: "이서연", status: "online" },
+  { id: "peer-3", name: "박지훈", status: "away" },
 ];
 
 function createDemoData(user: User, peers: User[]): Partial<AppState> {
   const now = Date.now();
 
   const room1: ChatRoom = {
-    id: uuidv4(),
+    id: "room-general",
     name: "일반 채팅",
     participants: [user, peers[0], peers[1]],
     messages: [
@@ -93,7 +103,7 @@ function createDemoData(user: User, peers: User[]): Partial<AppState> {
   };
 
   const room2: ChatRoom = {
-    id: uuidv4(),
+    id: "room-dev",
     name: "개발팀",
     participants: [user, peers[2]],
     messages: [
@@ -110,7 +120,7 @@ function createDemoData(user: User, peers: User[]): Partial<AppState> {
   };
 
   const project1: Project = {
-    id: uuidv4(),
+    id: "proj-1",
     name: "웹앱 리뉴얼",
     description: "기존 웹앱을 Next.js로 리뉴얼하는 프로젝트",
     members: [user, peers[0], peers[1]],
@@ -160,7 +170,7 @@ function createDemoData(user: User, peers: User[]): Partial<AppState> {
   ];
 
   const project2: Project = {
-    id: uuidv4(),
+    id: "proj-2",
     name: "모바일 앱 MVP",
     description: "모바일 앱 최소 기능 제품 개발",
     members: [user, peers[2]],
@@ -246,12 +256,34 @@ const initialState: AppState = {
   peers: demoPeers,
 };
 
+function loadState(): AppState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    return JSON.parse(saved) as AppState;
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state: AppState) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // storage full - ignore
+  }
+}
+
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case "HYDRATE":
+      return action.payload;
     case "SET_VIEW":
       return { ...state, currentView: action.payload };
     case "SET_ACTIVE_CHAT":
-      return { ...state, activeChatRoomId: action.payload };
+      return { ...state, activeChatRoomId: action.payload || null };
     case "ADD_CHAT_ROOM":
       return { ...state, chatRooms: [...state.chatRooms, action.payload] };
     case "ADD_MESSAGE": {
@@ -366,6 +398,24 @@ const AppContext = createContext<{
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
+  const hydrated = useRef(false);
+
+  // Load saved state on mount
+  useEffect(() => {
+    const saved = loadState();
+    if (saved) {
+      dispatch({ type: "HYDRATE", payload: saved });
+    }
+    hydrated.current = true;
+  }, []);
+
+  // Save state on every change (after hydration)
+  useEffect(() => {
+    if (hydrated.current) {
+      saveState(state);
+    }
+  }, [state]);
+
   return (
     <AppContext.Provider value={{ state, dispatch }}>
       {children}
