@@ -51,9 +51,7 @@ export function useWebSocket(handlers: WsEventHandler) {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.hostname;
-    const port = 4000;
-    const url = `${protocol}//${host}:${port}`;
+    const url = `${protocol}//${window.location.host}/ws`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

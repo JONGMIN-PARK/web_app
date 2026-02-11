@@ -3,14 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "ws": "node ws-server.js",
-    "dev": "next dev",
-    "dev:lan": "next dev -H 0.0.0.0 -p 3000",
-    "dev:full": "node ws-server.js & next dev -H 0.0.0.0 -p 3000",
+    "dev": "node server.js",
+    "dev:lan": "HOST=0.0.0.0 PORT=3000 node server.js",
     "dev:public": "bash scripts/start-public.sh",
     "dev:ngrok": "bash scripts/start-ngrok.sh",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_ENV=production node server.js",
     "lint": "next lint"
   },
   "dependencies": {
